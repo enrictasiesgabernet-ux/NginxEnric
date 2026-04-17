@@ -1,0 +1,85 @@
+##############################################################
+#  ProxyNginxApache_Enric
+#  Arquitectura:
+#    ┌─────────┐     least_conn      ┌──────────┐
+#    │  Nginx  │ ──────────────────► │ apache1  │
+#    │ :80     │   proxy + caché     ├──────────┤
+#    └─────────┘                     │ apache2  │
+#                                    └──────────┘
+#  Volumen compartido → web_content montado en ambos Apache
+##############################################################
+
+services:
+
+  # ── Nginx: proxy inverso, balanceador y caché ─────────────
+  nginx:
+    image: nginx:alpine
+    container_name: nginx_proxy
+    ports:
+      - "8080:80"           # accede desde el host en http://localhost:8080
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - nginx_cache:/var/cache/nginx
+    depends_on:
+      - apache1
+      - apache2
+    networks:
+      - web_net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ── Apache nodo 1 ─────────────────────────────────────────
+  apache1:
+    image: httpd:2.4-alpine
+    container_name: apache1
+    volumes:
+      - web_content:/usr/local/apache2/htdocs   # volumen compartido
+      - ./apache/httpd.conf:/usr/local/apache2/conf/httpd.conf:ro
+    environment:
+      - SERVER_NAME=apache1
+    networks:
+      - web_net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ── Apache nodo 2 ─────────────────────────────────────────
+  apache2:
+    image: httpd:2.4-alpine
+    container_name: apache2
+    volumes:
+      - web_content:/usr/local/apache2/htdocs   # mismo volumen compartido
+      - ./apache/httpd.conf:/usr/local/apache2/conf/httpd.conf:ro
+    environment:
+      - SERVER_NAME=apache2
+    networks:
+      - web_net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+# ── Volúmenes ────────────────────────────────────────────────
+volumes:
+  web_content:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./web      # la carpeta ./web/ del proyecto se monta como volumen
+  nginx_cache:
+    driver: local         # caché de Nginx persiste entre reinicios
+
+# ── Red interna ──────────────────────────────────────────────
+networks:
+  web_net:
+    driver: bridge
