@@ -42,79 +42,13 @@ docker-practica/
 └── README.md
 ```
 
-## Cómo ejecutar
+## Configuració de Nginx
 
-### Requisitos
+### Què hem fet
 
-- [Docker](https://docs.docker.com/get-docker/) ≥ 24
-- [Docker Compose](https://docs.docker.com/compose/) v2 (incluido en Docker Desktop)
+Nginx és el punt d'entrada de totes les peticions. Hem configurat tres coses:
 
-### Arrancar
-
-```bash
-docker compose up -d
-```
-
-### Ver la página
-
-Abre el navegador en: **http://localhost:8080**
-
-### Ver logs en tiempo real
-
-```bash
-# Todos los servicios
-docker compose logs -f
-
-# Solo Nginx (ver balanceo y caché)
-docker compose logs -f nginx
-
-# Solo los Apache
-docker compose logs -f apache1 apache2
-```
-
-### Verificar el balanceo de carga
-
-Las cabeceras de respuesta muestran qué nodo sirvió la petición:
-
-```bash
-# Ejecuta varias veces para ver cómo alterna entre apache1 y apache2
-curl -I http://localhost:8080
-```
-
-Busca la cabecera:
-```
-X-Upstream-Node: 172.x.x.x:80
-X-Cache-Status: MISS   (primera vez)
-X-Cache-Status: HIT    (desde caché)
-```
-
-### Verificar la caché
-
-```bash
-# Primera petición → MISS (va al Apache)
-curl -I http://localhost:8080
-
-# Segunda petición → HIT (servida desde caché Nginx)
-curl -I http://localhost:8080
-```
-
-### Parar los contenedores
-
-```bash
-docker compose down
-```
-
-### Parar y eliminar volúmenes (limpieza total)
-
-```bash
-docker compose down -v
-```
-
-## Detalles técnicos
-
-### Nginx — Balanceo de carga
-
-Se usa el algoritmo **`least_conn`** (menor número de conexiones activas), más justo que round-robin cuando las peticiones tienen duraciones variables.
+**Balanceig de càrrega** amb `least_conn`, que envia cada petició al servidor amb menys connexions actives:
 
 ```nginx
 upstream apache_cluster {
@@ -125,32 +59,32 @@ upstream apache_cluster {
 }
 ```
 
-### Nginx — Caché
+**Memòria cau** en disc. Les respostes es guarden 10 minuts. Si arriba una petició per un recurs que ja s'ha servit fa poc, Nginx el retorna directament sense anar als Apaches:
 
 ```nginx
 proxy_cache_path /var/cache/nginx
     levels=1:2
     keys_zone=mi_cache:10m
     max_size=500m
-    inactive=60m;
-
-proxy_cache            mi_cache;
-proxy_cache_valid      200 302  10m;
-proxy_cache_use_stale  error timeout ...;
-proxy_cache_lock       on;
+    inactive=60m
+    use_temp_path=off;
 ```
 
-| Parámetro | Valor | Significado |
-|---|---|---|
-| `keys_zone` | 10 MB | Índice en RAM |
-| `max_size` | 500 MB | Máximo en disco |
-| `inactive` | 60 min | Se purga si no se usa |
-| `proxy_cache_valid 200` | 10 min | TTL respuestas OK |
-| `proxy_cache_lock` | on | Sin thundering herd |
+**Capçaleres personalitzades** per verificar des de fora quin node va respondre i si la resposta ve de la caché:
 
-### Volumen compartido
+```nginx
+add_header X-Cache-Status  $upstream_cache_status always;
+add_header X-Upstream-Node $upstream_addr         always;
+add_header X-Served-By     "Nginx-LoadBalancer"   always;
+```
 
-Ambos Apache montan **exactamente la misma carpeta** `./web`:
+---
+
+## Fase 2 — Configuració dels Apaches i volum compartit
+
+### Què hem fet
+
+Els dos Apaches munten exactament la mateixa carpeta `./web` en mode bind. Això significa que serveixen el mateix `index.html`, les mateixes imatges i el mateix vídeo:
 
 ```yaml
 volumes:
@@ -162,212 +96,74 @@ volumes:
       device: ./web
 ```
 
-Esto garantiza que cualquier cambio en `./web/index.html` se ve en los dos nodos sin reiniciar contenedores.
-
-## Contenido de la página
-
-- **3 imágenes de paisajes** (Alpes, Valle, Lago alpino) — Unsplash
-- **Vídeo embebido** de YouTube (paisajes naturales)
-- **Cita filosófica** — Lao Tse, Tao Te Ching
-
-## Subir a GitHub
-
-```bash
-git init
-git add .
-git commit -m "feat: ProxyNginxApache_Enric - nginx + 2x apache + volumen compartido"
-git remote add origin https://github.com/TU_USUARIO/ProxyNginxApache_Enric.git
-git push -u origin main
-```
-
-> **Nota:** el volumen caché de Nginx (`nginx_cache`) se crea en tiempo de ejecución y no se versiona. El `.gitignore` lo excluye automáticamente al ser un volumen Docker.
 
 ---
 
-## Clonar y ejecutar en otro ordenador (paso a paso)
+## Contingut de la pàgina i recursos locals
 
-Sigue estos pasos exactos para tener el proyecto funcionando en cualquier máquina desde cero.
+### Què hem fet
 
-### Paso 1 — Instalar Docker
+La pàgina inclou 3 imatges de paisatges i un vídeo. En un primer moment les imatges venien d'Unsplash i el vídeo era un iframe de YouTube, però això feia que la caché de Nginx no els pogués guardar perquè no els servia ell.
 
-> Si ya tienes Docker instalado, salta al Paso 2.
+Per solucionar-ho hem descarregat tots els recursos localment a la carpeta `./web`:
 
-**Windows / macOS**
-1. Ve a https://www.docker.com/products/docker-desktop
-2. Descarga **Docker Desktop** para tu sistema operativo
-3. Instálalo y ábrelo (necesita estar corriendo en segundo plano)
-4. Verifica que funciona abriendo una terminal y ejecutando:
-   ```bash
-   docker --version
-   docker compose version
-   ```
-
-**Linux (Ubuntu/Debian)**
 ```bash
-# Instalar Docker
-sudo apt update
-sudo apt install -y docker.io docker-compose-plugin
-
-# Añadir tu usuario al grupo docker (para no necesitar sudo)
-sudo usermod -aG docker $USER
-
-# Cerrar sesión y volver a entrar para que el grupo surta efecto
-# Luego verificar:
-docker --version
-docker compose version
+wget -O imagen1.jpg "https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=900"
+wget -O imagen2.jpg "https://images.unsplash.com/photo-1501854140801-50d01698950b?w=700"
+wget -O imagen3.jpg "https://images.unsplash.com/photo-1469474968028-56623f02e42e?w=700"
+wget -O video.mp4 "https://www.w3schools.com/html/mov_bbb.mp4"
 ```
+
+I hem modificat el `index.html` perquè apunti als fitxers locals en lloc de les URLs externes. Així Nginx els serveix ell mateix i els pot guardar a la caché.
 
 ---
 
-### Paso 2 — Clonar el repositorio
+## Desplegament
 
-Abre una terminal y ejecuta:
-
-```bash
-git clone https://github.com/TU_USUARIO/ProxyNginxApache_Enric.git
-```
-
-Si no tienes Git instalado:
-- **Windows:** descarga Git en https://git-scm.com/download/win
-- **macOS:** ejecuta `xcode-select --install` en la terminal
-- **Linux:** `sudo apt install -y git`
 
 ---
 
-### Paso 3 — Entrar en la carpeta del proyecto
+## Evidències de funcionament
 
-```bash
-cd ProxyNginxApache_Enric
-```
+### 1. Web funcionant
 
-La estructura que deberías ver:
+La pàgina és accessible a `http://localhost:8080`. Es veuen les tres imatges de paisatges, el vídeo i la cita filosòfica.
 
-```
-ProxyNginxApache_Enric/
-├── docker-compose.yml
-├── nginx/
-│   └── nginx.conf
-├── apache/
-│   └── httpd.conf
-├── web/
-│   └── index.html
-├── .gitignore
-└── README.md
-```
+<img width="1280" height="813" alt="image" src="https://github.com/user-attachments/assets/e18cc83b-64d9-4f88-a6c2-9fe09d7c963b" />
 
 ---
 
-### Paso 4 — Levantar los contenedores
+### 2. Contenidors en marxa i capçaleres HTTP
 
-```bash
-docker compose up -d
-```
+Els tres contenidors estan en estat `Running`. El `curl -I` confirma que la petició passa per Nginx (`Server: nginx/1.29.8`, `X-Served-By: Nginx-LoadBalancer`) i que la caché funciona (`X-Cache-Status: HIT`).
 
-Este comando:
-1. Descarga las imágenes de Nginx y Apache si no las tienes (solo la primera vez)
-2. Crea la red interna `web_net`
-3. Crea el volumen compartido montando `./web`
-4. Arranca los 3 contenedores en segundo plano (`-d` = detached)
-
-Verifica que los 3 contenedores están corriendo:
-
-```bash
-docker compose ps
-```
-
-Deberías ver algo así:
-
-```
-NAME           IMAGE          STATUS          PORTS
-nginx_proxy    nginx:alpine   Up (healthy)    0.0.0.0:8080->80/tcp
-apache1        httpd:alpine   Up (healthy)    80/tcp
-apache2        httpd:alpine   Up (healthy)    80/tcp
-```
+![Contenidors i capçaleres](captures/curl-headers.png)
 
 ---
 
-### Paso 5 — Abrir la página web
+### 3. Caché de les imatges — HIT
 
-Abre el navegador y ve a:
+Les imatges estan servides localment. Després de la primera petició (`MISS`), les següents les retorna Nginx directament des de la caché (`HIT`) sense tocar els Apaches. Es pot veure que `Content-Type: image/jpeg` i `X-Cache-Status: HIT`.
 
-```
-http://localhost:8080
-```
+<img width="955" height="801" alt="image" src="https://github.com/user-attachments/assets/dd042395-ff22-4ac7-aac1-6ac6012e857e" />
 
-Verás la página con las imágenes de paisajes, el vídeo y la cita filosófica.
 
 ---
 
-### Paso 6 — Comprobar que el balanceo y la caché funcionan
+### 4. Caché del vídeo — MISS i HIT
 
-Abre una terminal y ejecuta varias veces seguidas:
+El vídeo també està servit localment (`Content-Type: video/mp4`). La primera petició mostra `X-Cache-Status: MISS` i `X-Upstream-Node: 172.19.0.2:80`, que és la IP del contenidor Apache que va respondre. La segona petició ja serà `HIT`.
 
-```bash
-curl -I http://localhost:8080
-```
+<img width="1355" height="660" alt="image" src="https://github.com/user-attachments/assets/f978fb87-356e-4f68-8c5e-aed7a8c04c18" />
 
-Fíjate en estas cabeceras de respuesta:
-
-| Cabecera | Qué indica |
-|---|---|
-| `X-Upstream-Node` | IP del Apache que respondió (cambia entre peticiones) |
-| `X-Cache-Status: MISS` | Nginx fue al Apache a buscar el contenido |
-| `X-Cache-Status: HIT` | Nginx lo sirvió desde su caché (más rápido) |
-| `X-Served-By: Nginx-LoadBalancer` | Confirmación de que pasa por Nginx |
 
 ---
 
-### Paso 7 — Ver los logs
+### 5. Logs — balanceig visible entre apache1 i apache2
 
-```bash
-# Ver logs de todos los servicios en tiempo real
-docker compose logs -f
+Als logs es pot veure com les peticions es reparteixen entre els dos nodes. Un cop la caché expira, `apache1` i `apache2` alternen responent a les mateixes peticions:
 
-# Solo Nginx (muestra balanceo y estado de caché)
-docker compose logs -f nginx
+<img width="1322" height="732" alt="image" src="https://github.com/user-attachments/assets/b88ab577-e55c-44d6-abeb-4cbf84d2d50d" />
+<img width="1310" height="821" alt="image" src="https://github.com/user-attachments/assets/455885f0-4c7c-4625-8506-13c13d3d5b91" />
+<img width="1278" height="786" alt="image" src="https://github.com/user-attachments/assets/152fa51a-ccb5-479d-abc4-47dae317d85f" />
 
-# Solo los Apache
-docker compose logs -f apache1 apache2
-```
-
-Pulsa `Ctrl + C` para salir de los logs (los contenedores siguen corriendo).
-
----
-
-### Parar el proyecto
-
-```bash
-# Parar los contenedores (se pueden volver a arrancar con "up -d")
-docker compose down
-
-# Parar y eliminar también los volúmenes (limpieza total)
-docker compose down -v
-```
-
----
-
-### Solución de problemas frecuentes
-
-**El puerto 8080 ya está en uso**
-```bash
-# Ver qué proceso lo está usando
-# Windows (PowerShell):
-netstat -ano | findstr :8080
-
-# macOS / Linux:
-lsof -i :8080
-
-# Solución: cambiar el puerto en docker-compose.yml
-ports:
-  - "9090:80"   # usar 9090 en vez de 8080
-```
-
-**"Cannot connect to the Docker daemon"**
-→ Docker Desktop no está abierto. Ábrelo y espera a que el icono de la ballena aparezca en la barra de tareas.
-
-**Los contenedores aparecen como "Exited"**
-```bash
-# Ver el error concreto
-docker compose logs nginx
-docker compose logs apache1
-```
